@@ -27,19 +27,21 @@ if __name__ == "__main__":
     import time
     import tensorflow as tf
 
-    DEVICE_STR = "gpu:2"
+    DEVICE_STR = "cpu:0"
     BATCH_SIZE = 3
     OUTPUT_DIM = 1
 
     with tf.device(DEVICE_STR):
         u = u_net(DEVICE_STR, 1e-5, BATCH_SIZE, OUTPUT_DIM)
         output_shape = u.outputs.get_shape().as_list()
-        logits = tf.nn.sigmoid(u.outputs, name="pred")
+        logits = u.outputs
+        #logits = tf.nn.sigmoid(u.outputs, name="pred")
         a = tf.constant(1e-7)
-
+        svm_w = tf.random_normal(output_shape, mean = 0, stddev= 0.5)
         y_placeholder = tf.placeholder(dtype=tf.float32, shape=output_shape)
-        loss =  - tf.reduce_mean(y_placeholder * tf.log(logits+a) + (1 - y_placeholder) * tf.log(1 - logits+a))
-
+        svm_loss = tf.reduce_sum(tf.norm(svm_w)) + tf.reduce_sum(svm_w * logits - svm_w * y_placeholder)
+        delta =  - tf.reduce_mean(y_placeholder * tf.log(logits+a) + (1 - y_placeholder) * tf.log(1 - logits+a))
+        loss = svm_loss + delta
         loss, _, reloss = total_loss("loss", loss)
 
         l1 = tf.reduce_sum(logits * y_placeholder) / tf.reduce_sum(y_placeholder)  # Recall
@@ -61,7 +63,7 @@ if __name__ == "__main__":
 
     merged = tf.summary.merge_all()
 
-    DATA_PATH = "/home/ly/data/road_data/image/train_npz"
+    DATA_PATH = "F:\遥感数据\\road\SpaceNet\AOI_2_Vegas_Roads_Train\\train_npz"
     fn_list = [os.path.join(DATA_PATH, fn) for fn in os.listdir(DATA_PATH) if "npz" in fn]
     print("\n".join(fn_list))
     with data_loader(n_workers=4, load_func=load_images) as data:
@@ -79,12 +81,13 @@ if __name__ == "__main__":
                     u.inputs: images,
                     y_placeholder: labels
                 }
-                summary, l, rl, _ = sess.run([merged, loss, reloss, update_op], feed_dict=feed_dict)
+                summary, svmloss, l, rl, _, = sess.run([merged,svm_loss, loss, reloss, update_op], feed_dict=feed_dict)
                 Recall, Precision, F1_re = sess.run([l1, l2, F1], feed_dict=feed_dict)
                 if i > 3000 and i % 2000 == 0:
                     saver.save(sess, 'models/road_6m.%d'%i, global_step=i)
                 if i % 10 == 0:
                     train_writer.add_summary(summary, i)
+                    print(svmloss)
                     print("<%d> loss: %.6f, re loss: %.6f"%(i, l, rl))
                     print("<%d> Recall: %.6f, Precision: %.6f, F1: %.6f" % (i, Recall, Precision, F1_re))
                 i += 1
